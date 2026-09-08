@@ -1,1 +1,17 @@
+Why K8s?
+Why not Docker?
 
+Docker:
+Containerasation Platform
+Kubernetes:
+ontainerasation orchestration Platform
+
+In docker we have containers that craches it does have the capacity to restart by it self? - No
+In Real time if Container goes down does the users will wait till someone notices the container and starts it ? - NO
+
+So we have Kubernetes it solves the problems and provides the right solution for it.
+
+1.Auto Healing
+2.Auto Scaling
+3.Enterprise level Solution
+4.Single Host.

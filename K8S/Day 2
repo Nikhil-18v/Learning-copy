@@ -1,1 +1,755 @@
 
+Think of a Kubernetes cluster as having two major sides:
+
+                    KUBERNETES CLUSTER
+                           |
+             +-------------+-------------+
+             |                           |
+      CONTROL PLANE                  WORKER NODES
+      "The Manager"                 "Where apps run"
+             |                           |
+      API Server                     Kubelet
+      Scheduler                      Kube-proxy
+      Controller Manager             Container Runtime
+      etcd                           Pods
+
+The simplest definition:
+
+Control Plane decides what should happen. Worker Nodes actually run the applications.
+
+For example, you tell Kubernetes:
+
+"I want 3 copies of my backend application running."
+
+The control plane figures out where those 3 copies should run.
+
+The worker nodes actually run them.
+
+2. Before Kubernetes: Cluster → Node → Pod → Container
+
+This hierarchy is extremely important.
+
+Kubernetes Cluster
+│
+├── Control Plane
+│
+└── Worker Nodes
+      │
+      ├── Worker Node 1
+      │     ├── Pod
+      │     │    └── Container
+      │     └── Pod
+      │          └── Container
+      │
+      └── Worker Node 2
+            └── Pod
+                 └── Container
+
+Suppose your application has:
+
+Frontend
+Backend
+Database
+
+Kubernetes could eventually run:
+
+Worker Node 1
+├── frontend-pod
+│     └── frontend container
+│
+└── backend-pod
+      └── backend container
+
+
+Worker Node 2
+├── backend-pod
+│     └── backend container
+│
+└── postgres-pod
+      └── postgres container
+
+Important:
+
+Kubernetes doesn't normally deploy your source code directly.
+
+It runs containers created from container images.
+
+That's why your pipeline makes sense:
+
+Source Code
+    ↓
+Jenkins
+    ↓
+Build/Test
+    ↓
+Docker Build
+    ↓
+Docker Image
+    ↓
+Docker Hub / ECR
+    ↓
+Kubernetes
+    ↓
+Pod
+    ↓
+Container
+    ↓
+Application
+3. Kubernetes Control Plane
+
+Now let's open up the "brain."
+
+CONTROL PLANE
+│
+├── API Server
+├── etcd
+├── Scheduler
+└── Controller Manager
+
+Each has a completely different responsibility.
+
+4. API Server — the front door
+
+The kube-apiserver is probably the most important component to understand first.
+
+Almost everything communicates through it.
+
+Imagine you execute:
+
+kubectl apply -f deployment.yaml
+
+kubectl doesn't directly contact a worker node.
+
+Instead:
+
+You
+ |
+kubectl
+ |
+ v
+API SERVER
+ |
+ +---- etcd
+ |
+ +---- Scheduler
+ |
+ +---- Controller Manager
+ |
+ +---- Kubelet
+
+So think:
+
+API Server = front door/receptionist of Kubernetes.
+
+Requests to create, modify, delete, or retrieve Kubernetes resources go through the API server.
+
+For example:
+
+kubectl get pods
+kubectl get nodes
+kubectl apply -f deployment.yaml
+kubectl delete pod backend
+kubectl scale deployment backend --replicas=5
+
+All of these interact with the Kubernetes API.
+
+5. etcd — Kubernetes database
+
+Next is etcd.
+
+Think:
+
+etcd = memory/database of the Kubernetes cluster.
+
+It stores Kubernetes cluster state.
+
+For example, Kubernetes needs to know:
+
+What Deployments exist?
+What Services exist?
+How many replicas are requested?
+What ConfigMaps exist?
+What Secrets exist?
+What Nodes exist?
+
+That information is persisted in etcd.
+
+Suppose your YAML says:
+
+replicas: 3
+
+The desired cluster state includes:
+
+backend deployment
+desired replicas = 3
+
+If only two Pods are running, Kubernetes can detect:
+
+Desired = 3
+Actual  = 2
+
+and work toward restoring the desired state.
+
+This leads to one of Kubernetes' most important ideas:
+
+Desired State vs Actual State
+Desired State
+      |
+      | Kubernetes continuously reconciles
+      v
+Actual State
+
+You declare:
+
+"I want 3 backend Pods."
+
+Kubernetes continuously works toward:
+
+3 backend Pods running
+
+If one crashes:
+
+Before
+
+Pod 1 ✅
+Pod 2 ✅
+Pod 3 ✅
+
+        ↓
+
+Pod 1 ✅
+Pod 2 ❌
+Pod 3 ✅
+
+        ↓ Kubernetes reconciles
+
+Pod 1 ✅
+Pod 3 ✅
+New Pod 4 ✅
+
+This is the foundation of Kubernetes self-healing.
+
+6. Scheduler — decides WHERE a Pod runs
+
+Suppose Kubernetes needs to create a new backend Pod.
+
+Your cluster has:
+
+Worker Node 1
+Worker Node 2
+Worker Node 3
+
+Who decides which node gets the Pod?
+
+kube-scheduler.
+
+New Pod needs to run
+        ↓
+     Scheduler
+        ↓
+Looks at available nodes
+        ↓
+CPU / Memory
+Constraints
+Taints / Tolerations
+Affinity rules
+etc.
+        ↓
+Selects Node 2
+
+So:
+
+Scheduler = decides which Worker Node should run a Pod.
+
+Important distinction:
+
+The scheduler doesn't run the container itself.
+
+It only makes the placement decision.
+
+7. Controller Manager — continuously checks the state
+
+This is where Kubernetes starts becoming very interesting for SRE.
+
+Think:
+
+Controller Manager = continuously watches whether reality matches what you requested.
+
+Example:
+
+Desired replicas = 3
+Actual replicas  = 2
+
+Controller detects:
+
+Something is wrong.
+
+Need one more Pod.
+
+Then Kubernetes works toward creating another Pod.
+
+There are multiple controllers handling different resources and lifecycle tasks.
+
+Conceptually:
+
+              Desired State
+                   |
+                   v
+          Controller Manager
+                   |
+             compare state
+                   |
+          +--------+--------+
+          |                 |
+       matches           doesn't match
+          |                 |
+      do nothing       take corrective
+                          action
+
+This is called a reconciliation loop.
+
+You'll hear this term frequently in Kubernetes.
+
+8. Now move to Worker Nodes
+
+Control Plane:
+
+API Server
+etcd
+Scheduler
+Controller Manager
+
+Worker:
+
+WORKER NODE
+│
+├── Kubelet
+├── Container Runtime
+├── Kube-proxy
+│
+└── Pods
+      └── Containers
+
+Let's understand each.
+
+9. Kubelet — manager/agent on each Worker Node
+
+Every worker node runs a kubelet.
+
+Think:
+
+Kubelet = Kubernetes agent responsible for Pods on that particular node.
+
+Suppose scheduler decides:
+
+backend-pod → Worker Node 2
+
+The kubelet on Worker Node 2 sees that the Pod is assigned there and works with the container runtime to get the containers running.
+
+Conceptually:
+
+API Server
+     |
+     | Pod assigned to Node 2
+     v
+Kubelet
+     |
+     v
+Container Runtime
+     |
+     v
+Pull Image
+     |
+     v
+Create Container
+     |
+     v
+Pod Running
+
+The kubelet also reports Pod/node status back through the Kubernetes API.
+
+So if you run:
+
+kubectl get pods
+
+and see:
+
+backend-123   1/1   Running
+
+that state is part of Kubernetes' continuously updated cluster information.
+
+10. Container Runtime
+
+Kubernetes itself isn't the low-level component that executes containers.
+
+Worker nodes need a container runtime, commonly containerd or CRI-O.
+
+Conceptually:
+
+Kubelet
+   ↓
+Container Runtime
+   ↓
+Container Image
+   ↓
+Running Container
+
+For example:
+
+Docker Hub
+
+nikhilbecomessre/backend:v5
+          ↓
+      Worker Node
+          ↓
+      containerd
+          ↓
+       Container
+
+One important interview point:
+
+Modern Kubernetes uses the CRI (Container Runtime Interface) to work with compatible runtimes such as containerd and CRI-O. Docker Engine itself is no longer directly integrated through the old dockershim.
+
+11. Pod — smallest deployable unit
+
+This is one of the most important concepts.
+
+Kubernetes generally doesn't say:
+
+Run my container.
+
+The deployable abstraction is:
+
+POD
+ └── Container
+
+So:
+
+Pod is the smallest deployable unit in Kubernetes.
+
+Most commonly:
+
+1 Pod
+  ↓
+1 main application container
+
+Example:
+
+backend-pod
+      |
+      └── Java container
+
+But a Pod can contain multiple containers when they need to operate very closely together:
+
+Pod
+├── Main Application
+└── Sidecar
+
+Containers inside the same Pod share networking and can share volumes.
+
+12. kube-proxy — service networking
+
+Now suppose you have:
+
+frontend-pod
+backend-pod
+
+Frontend needs to reach backend.
+
+But Pods are replaceable.
+
+Today:
+
+backend-pod IP = 10.244.1.5
+
+Pod crashes.
+
+Replacement might be:
+
+backend-pod IP = 10.244.2.8
+
+You don't want your frontend hardcoding changing Pod IP addresses.
+
+That's where Services come in.
+
+Frontend
+    |
+    v
+Backend Service
+    |
+    +------> Backend Pod 1
+    |
+    +------> Backend Pod 2
+    |
+    +------> Backend Pod 3
+
+kube-proxy traditionally implements node-level Service traffic rules, although some modern Kubernetes networking solutions can implement Service routing differently.
+
+For learning purposes:
+
+Service provides stable access to Pods; kube-proxy commonly helps implement that traffic routing.
+
+13. Full architecture so far
+
+Put everything together:
+
+                         USER / JENKINS
+                               |
+                               |
+                            kubectl
+                               |
+                               v
++------------------------------------------------------+
+|                 CONTROL PLANE                        |
+|                                                      |
+|                   API SERVER                         |
+|                  /    |     \                        |
+|                 /     |      \                       |
+|                v      v       v                      |
+|             ETCD   SCHEDULER  CONTROLLER             |
+|                               MANAGER                |
++-------------------------|----------------------------+
+                          |
+                          |
+             +------------+------------+
+             |                         |
+             v                         v
+
++-----------------------+     +-----------------------+
+|    WORKER NODE 1      |     |    WORKER NODE 2      |
+|                       |     |                       |
+| Kubelet               |     | Kubelet               |
+| Container Runtime     |     | Container Runtime     |
+| Kube-proxy            |     | Kube-proxy            |
+|                       |     |                       |
+| +------------------+  |     | +------------------+  |
+| | frontend Pod     |  |     | | backend Pod      |  |
+| |   └─ container   |  |     | |   └─ container   |  |
+| +------------------+  |     | +------------------+  |
+|                       |     |                       |
++-----------------------+     +-----------------------+
+14. What exactly happens when you run kubectl apply?
+
+This is the part I want you to understand particularly well.
+
+Suppose you have:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 3
+
+You execute:
+
+kubectl apply -f backend-deployment.yaml
+Step 1 — kubectl contacts API Server
+kubectl
+   ↓
+API Server
+
+The API server authenticates/authorizes the request and validates it.
+
+Step 2 — desired state is persisted
+
+Kubernetes now knows:
+
+Deployment = backend
+Desired replicas = 3
+
+The cluster's persistent state is stored through the API server in etcd.
+
+Step 3 — controllers notice the desired state
+
+The Deployment/ReplicaSet controllers eventually cause three Pods to be required.
+
+Deployment
+    ↓
+ReplicaSet
+    ↓
+Pod
+Pod
+Pod
+
+This relationship is important:
+
+Deployment
+    ↓ manages
+ReplicaSet
+    ↓ manages
+Pods
+
+Usually you don't manually create and manage individual Pods for normal applications.
+
+You create a Deployment.
+
+Step 4 — Scheduler sees unscheduled Pods
+
+Initially:
+
+Pod 1 → no node
+Pod 2 → no node
+Pod 3 → no node
+
+Scheduler evaluates the available worker nodes.
+
+Maybe:
+
+Pod 1 → Worker 1
+Pod 2 → Worker 2
+Pod 3 → Worker 2
+Step 5 — Kubelets take over
+
+Worker 1 kubelet sees:
+
+I need to run Pod 1.
+
+Worker 2 kubelet sees:
+
+I need to run Pod 2 and Pod 3.
+Step 6 — container runtime pulls images
+
+For example:
+
+Docker Hub / ECR
+       ↓
+   containerd
+       ↓
+ backend:v10
+Step 7 — Containers start
+
+Eventually:
+
+kubectl get pods
+
+backend-abc     1/1 Running
+backend-def     1/1 Running
+backend-xyz     1/1 Running
+15. What if one Pod crashes?
+
+This is where Kubernetes becomes powerful.
+
+Suppose:
+
+Deployment says:
+
+replicas = 3
+
+Current state:
+
+Pod A ✅
+Pod B ❌
+Pod C ✅
+
+The controllers observe:
+
+Desired = 3
+Actual = 2
+
+So Kubernetes works toward:
+
+Create another Pod
+
+Scheduler chooses a node.
+
+Kubelet starts it.
+
+Eventually:
+
+Pod A ✅
+Pod C ✅
+Pod D ✅
+
+Back to:
+
+Desired = 3
+Actual = 3
+
+That's self-healing through reconciliation.
+
+16. Your Jenkins project mapped to Kubernetes
+
+This will make the architecture much easier for you.
+
+You have been working toward:
+
+Developer
+   |
+   | git push
+   v
+GitHub
+   |
+   v
+Jenkins
+   |
+   +--> Build
+   |
+   +--> Test
+   |
+   +--> Docker Build
+   |
+   v
+Docker Hub
+   |
+   | Image
+   v
+Kubernetes
+
+Then Kubernetes side:
+
+Deployment YAML / Helm
+        ↓
+    API Server
+        ↓
+Controllers determine required Pods
+        ↓
+Scheduler selects Worker Node
+        ↓
+Kubelet
+        ↓
+Container Runtime
+        ↓
+Pull Docker image
+        ↓
+Start Container
+        ↓
+Pod Running
+        ↓
+Service
+        ↓
+Users / Other Applications
+
+And when you later introduce Argo CD, the CD flow becomes more like:
+
+Jenkins
+   ↓
+Build/Test/Image
+   ↓
+Docker Registry
+
+Git repository
+(Kubernetes/Helm configuration)
+   ↓
+Argo CD
+   ↓
+Kubernetes API
+   ↓
+Deployment
+   ↓
+Pods
+
+That's the connection between all the individual technologies you're learning.
+
+17. Don't confuse these 7 components
+
+For interviews, keep this mental table:
+
+Component	Remember it as
+API Server	Front door
+etcd	Cluster database/memory
+Scheduler	Chooses Worker Node
+Controller Manager	Reconciles desired vs actual state
+Kubelet	Node agent managing assigned Pods
+Container Runtime	Actually runs containers
+kube-proxy	Common implementation layer for Service traffic

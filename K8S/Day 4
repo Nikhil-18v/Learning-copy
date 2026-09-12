@@ -1,0 +1,20 @@
+Deployment
+    ↓
+How many Pods?
+replicas: 3
+
+    ↓
+Which Pods are mine?
+selector
+
+    ↓
+How should I create those Pods?
+template
+
+    ↓
+What runs inside those Pods?
+containers
+
+    ↓
+Which image?
+nginx:1.14.2
